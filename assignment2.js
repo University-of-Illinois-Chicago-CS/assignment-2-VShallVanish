@@ -1,3 +1,5 @@
+//Author: Vansh "V" Mattraa
+//Starter code provided by: Professor Khairi Reda
 import vertexShaderSrc from './vertex.glsl.js';
 import fragmentShaderSrc from './fragment.glsl.js'
 
