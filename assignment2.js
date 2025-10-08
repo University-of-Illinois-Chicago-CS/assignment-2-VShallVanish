@@ -1,5 +1,7 @@
 //Author: Vansh "V" Mattraa
 //Starter code provided by: Professor Khairi Reda
+//Fall 2025, UIC CS 425, Assignment 2
+
 import vertexShaderSrc from './vertex.glsl.js';
 import fragmentShaderSrc from './fragment.glsl.js'
 
@@ -195,33 +197,26 @@ window.loadImageFile = function(event)
 		var img = new Image();
 		img.onload = function()
 		{
-			// heightmapData is globally defined
-			// heightmapData is globally defined
 			// Use Date.now() to capture timestamps (milliseconds since epoch).
 			var startTime = Date.now();
 			console.log("Start time: " + startTime);
+
+			// Process the image to extract heightmap data
 			heightmapData = processImage(img);
-
-			
-
-			/*
-				TODO: using the data in heightmapData, create a triangle mesh
-					heightmapData.data: array holding the actual data, note that 
-					this is a single dimensional array the stores 2D data in row-major order
-
-					heightmapData.width: width of map (number of columns)
-					heightmapData.height: height of the map (number of rows)
-			*/
 
 			console.log("Image processing took " + (Date.now() - startTime) + " ms");
 			startTime = Date.now();
+
+			// Create the mesh from the heightmap data
 			const mesh = createMeshFromHeightmap(heightmapData);
+
 			console.log("Mesh creation took " + (Date.now() - startTime) + " ms");
-
 			startTime = Date.now();
-			drawMesh(mesh);
-			console.log("Mesh draw took " + (Date.now() - startTime) + " ms");
 
+			// Draw the mesh (create buffers, VAOs, etc.)
+			drawMesh(mesh);
+
+			console.log("Mesh draw took " + (Date.now() - startTime) + " ms");
 			console.log('loaded image: ' + heightmapData.width + ' x ' + heightmapData.height);
 
 		};
@@ -320,14 +315,18 @@ function draw()
 	var rotZ = gZRot * Math.PI / 180;
 	var rotZMatrix = rotateZMatrix(rotZ);
 
-	// Do Y first so it rotates around center
+	// Do Y so it is applied last (after X and Z)
+	// because matrix multiplication is backwards
+	// i.e. v' = Ry * Rx * v  means Rx is applied first
+	// Combine all rotations into a single matrix
 	var finalRotationMatrix = multiplyArrayOfMatrices([rotYMatrix, rotZMatrix, rotXMatrix]);
 
+	// model -> rotate -> scaling -> uniform zoom -> translate
 	var modelMatrix = multiplyArrayOfMatrices([
-		uniformZoom,
 		centerTranslation,
-		finalRotationMatrix,
+		uniformZoom,
 		scaleHeight,
+		finalRotationMatrix,
 		gModelMatrix
 	]);
 
