@@ -10,6 +10,10 @@ var vertexCount = 0;
 var uniformModelViewLoc = null;
 var uniformProjectionLoc = null;
 var heightmapData = null;
+// model transform (will scale terrain larger than unit cube for visibility)
+var gModelMatrix = identityMatrix();
+var gZRot = 0; // global rotation angle around Z axis, in radians
+var gXRot = 0; // global rotation angle around X axis, in radians
 
 function processImage(img)
 {
@@ -51,10 +55,71 @@ function processImage(img)
 	return {
 		data: heightArray,
 		width: sw,
-		height: sw
+		height: sh
 	};
 }
 
+function createMeshFromHeightmap(heightmap)
+{
+	const w = heightmap.width;
+	const h = heightmap.height;
+	const data = heightmap.data; // already 0..1 luminance (raw) from processImage
+	if (w < 2 || h < 2) return { positions: new Float32Array() };
+
+	const quadsX = w - 1;
+	const quadsY = h - 1;
+	const quadCount = quadsX * quadsY;
+	const FLOATS_PER_QUAD = 18; // 2 triangles * 3 verts * 3 comps
+	const positions = new Float32Array(quadCount * FLOATS_PER_QUAD);
+
+	let p = 0; // write cursor into positions
+	for (let row = 0; row < h - 1; row++) {
+		const rowOffset = row * w;
+		const nextRowOffset = (row + 1) * w;
+		const z0 = 2 * (row / (h - 1)) - 1;
+		const z1 = 2 * ((row + 1) / (h - 1)) - 1;
+		for (let col = 0; col < w - 1; col++) {
+			const x0 = 2 * (col / (w - 1)) - 1;
+			const x1 = 2 * ((col + 1) / (w - 1)) - 1;
+
+			const iTL = rowOffset + col;
+			const iTR = rowOffset + (col + 1);
+			const iBL = nextRowOffset + col;
+			const iBR = nextRowOffset + (col + 1);
+
+			const hTL = 2 * (data[iTL]) - 1;
+			const hTR = 2 * (data[iTR]) - 1;
+			const hBL = 2 * (data[iBL]) - 1;
+			const hBR = 2 * (data[iBR]) - 1;
+
+			// Triangle 1 (TL, TR, BL)
+			positions[p++] = x0; positions[p++] = hTL; positions[p++] = z0;
+			positions[p++] = x1; positions[p++] = hTR; positions[p++] = z0;
+			positions[p++] = x0; positions[p++] = hBL; positions[p++] = z1;
+			// Triangle 2 (TR, BR, BL)
+			positions[p++] = x1; positions[p++] = hTR; positions[p++] = z0;
+			positions[p++] = x1; positions[p++] = hBR; positions[p++] = z1;
+			positions[p++] = x0; positions[p++] = hBL; positions[p++] = z1;
+		}
+	}
+	gModelMatrix = identityMatrix();
+
+	return { positions };
+}
+
+function drawMesh(mesh) {
+	// Support either plain array or pre-created Float32Array.
+	const posData = (mesh.positions instanceof Float32Array) ? mesh.positions : new Float32Array(mesh.positions);
+	vertexCount = posData.length / 3; // global used by draw()
+	const posBuffer = createBuffer(gl, gl.ARRAY_BUFFER, posData);
+
+	vao = createVAO(gl,
+		gl.getAttribLocation(program, "position"), posBuffer,
+		null, null,
+		null, null
+	);
+	window.requestAnimationFrame(draw);
+}
 
 window.loadImageFile = function(event)
 {
@@ -81,6 +146,11 @@ window.loadImageFile = function(event)
 					heightmapData.width: width of map (number of columns)
 					heightmapData.height: height of the map (number of rows)
 			*/
+
+			const mesh = createMeshFromHeightmap(heightmapData);
+			drawMesh(mesh);
+
+
 			console.log('loaded image: ' + heightmapData.width + ' x ' + heightmapData.height);
 
 		};
@@ -99,6 +169,9 @@ window.loadImageFile = function(event)
 
 function setupViewMatrix(eye, target)
 {
+
+
+	// Compute forward, right, and up vectors
     var forward = normalize(subtract(target, eye));
     var upHint  = [0, 1, 0];
 
@@ -126,19 +199,57 @@ function draw()
 	);
 
 	// eye and target
-	var eye = [0, 5, 5];
+	var eye = [2, 3, 4];
 	var target = [0, 0, 0];
 
-	var modelMatrix = identityMatrix();
+	// Build model matrix dynamically: center -> apply rotations -> height scale -> user zoom.
+	// Get UI inputs (fallbacks if elements missing).
+	var zoomVal = 100; // midpoint default
+	var heightVal = 50; // midpoint default
+	var rotYDeg = 0; // default
+	var zoomSlider = document.getElementById('scale');
+	var heightSlider = document.getElementById('height');
+	var rotSlider = document.getElementById('rotation');
 
-	// TODO: set up transformations to the model
+	
+	if (rotSlider) rotYDeg = parseFloat(rotSlider.value);
+	if (zoomSlider) zoomVal = parseFloat(zoomSlider.value);
+	if (heightSlider) heightVal = parseFloat(heightSlider.value);
+
+	// Map zoom slider [0,200] -> scale [2, 10.0]
+	var zoomScale = 2 + (zoomVal / 200) * (10.0 - 2.0);
+	// Map height slider [0,100] -> height multiplier [0, 1]
+	var heightScale = (heightVal / 100) * 1.0;
+
+	// Matrices (note: provided helpers are column-major arrays).
+	var centerTranslation = translateMatrix(0, 0, 0);
+	var scaleHeight = scaleMatrix(1, Math.max(0.0001, heightScale), 1);
+	var uniformZoom = scaleMatrix(zoomScale, zoomScale, zoomScale);
+
+	var modelMatrix = multiplyArrayOfMatrices([
+		uniformZoom,
+		scaleHeight,
+		centerTranslation
+	]);
 
 	// setup viewing matrix
 	var eyeToTarget = subtract(target, eye);
 	var viewMatrix = setupViewMatrix(eye, target);
 
+	var rotX = gXRot * Math.PI / 180;
+	var rotXMatrix = rotateXMatrix(rotX);
+
+	var rotY = rotYDeg * Math.PI / 180;
+	var rotYMatrix = rotateYMatrix(rotY);
+
+	var rotZ = gZRot * Math.PI / 180;
+	var rotZMatrix = rotateZMatrix(rotZ);
+
+	var finalRotationMatrix = multiplyArrayOfMatrices([rotXMatrix, rotYMatrix, rotZMatrix]);
+
+
 	// model-view Matrix = view * model
-	var modelviewMatrix = multiplyMatrices(viewMatrix, modelMatrix);
+	var modelviewMatrix = multiplyArrayOfMatrices([viewMatrix, finalRotationMatrix, modelMatrix]);
 
 
 	// enable depth testing
@@ -148,7 +259,7 @@ function draw()
 	gl.disable(gl.CULL_FACE);
 
 	gl.clearColor(0.2, 0.2, 0.2, 1);
-	gl.clear(gl.COLOR_BUFFER_BIT);
+	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
 	gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 	gl.useProgram(program);
@@ -259,9 +370,13 @@ function addMouseCallback(canvas)
 		if (e.deltaY < 0) 
 		{
 			console.log("Scrolled up");
+
+			scaleRange.value = Math.min(200, parseFloat(scaleRange.value) + 10);
+			// update zoom
 			// e.g., zoom in
 		} else {
 			console.log("Scrolled down");
+			scaleRange.value = Math.max(0, parseFloat(scaleRange.value) - 10);
 			// e.g., zoom out
 		}
 	});
@@ -276,6 +391,12 @@ function addMouseCallback(canvas)
 		console.log('mouse drag by: ' + deltaX + ', ' + deltaY);
 
 		// implement dragging logic
+		gZRot += deltaX * 0.5; // adjust sensitivity as needed
+		gXRot += deltaY * -0.5;
+
+
+		startX = currentX;
+		startY = currentY;
 	});
 
 	document.addEventListener("mouseup", function () {
@@ -286,6 +407,11 @@ function addMouseCallback(canvas)
 		isDragging = false;
 	});
 }
+
+const rotationRange = document.getElementById("rotationRange");
+const scaleRange = document.getElementById("scale");
+const heightRange = document.getElementById("height");
+const fileInput = document.getElementById('fileInput');
 
 function initialize() 
 {
@@ -298,13 +424,14 @@ function initialize()
 	// add mouse callbacks
 	addMouseCallback(canvas);
 
-	var box = createBox();
-	vertexCount = box.positions.length / 3;		// vertexCount is global variable used by draw()
-	console.log(box);
+	// var box = createBox();
+	// vertexCount = box.positions.length / 3;		// vertexCount is global variable used by draw()
+	// console.log(box);
+
 
 	// create buffers to put in box
-	var boxVertices = new Float32Array(box['positions']);
-	var posBuffer = createBuffer(gl, gl.ARRAY_BUFFER, boxVertices);
+	// var boxVertices = new Float32Array(box['positions']);
+	// var posBuffer = createBuffer(gl, gl.ARRAY_BUFFER, boxVertices);
 
 	var vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSrc);
 	var fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSrc);
@@ -317,16 +444,25 @@ function initialize()
 	uniformModelViewLoc = gl.getUniformLocation(program, 'modelview');
 	uniformProjectionLoc = gl.getUniformLocation(program, 'projection');
 
-	vao = createVAO(gl, 
-		// positions
-		posAttribLoc, posBuffer, 
+	// vao = createVAO(gl, 
+	// 	// positions
+	// 	posAttribLoc, posBuffer, 
 
-		// normals (unused in this assignments)
-		null, null, 
+	// 	// normals (unused in this assignments)
+	// 	null, null, 
 
-		// colors (not needed--computed by shader)
-		null, null
-	);
+	// 	// colors (not needed--computed by shader)
+	// 	null, null
+	// );
+
+	// load "rainier-small.jpeg" as test image
+	var img = new Image();
+	img.onload = function() {
+		heightmapData = processImage(img);
+		const mesh = createMeshFromHeightmap(heightmapData);
+		drawMesh(mesh);
+	};
+	img.src = "rainier-small.jpeg";
 
 	window.requestAnimationFrame(draw);
 }
