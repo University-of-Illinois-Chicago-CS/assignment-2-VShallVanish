@@ -15,6 +15,9 @@ var gModelMatrix = identityMatrix();
 var gZRot = 0; // global rotation angle around Z axis, in radians
 var gXRot = 0; // global rotation angle around X axis, in radians
 
+var eyeX = 0;
+var eyeZ = 0;
+
 function processImage(img)
 {
 	// draw the image into an off-screen canvas
@@ -185,21 +188,33 @@ function setupViewMatrix(eye, target)
 function draw()
 {
 
-	var fovRadians = 70 * Math.PI / 180;
+	var fovRadians = 75 * Math.PI / 180;
 	var aspectRatio = +gl.canvas.width / +gl.canvas.height;
-	var nearClip = 0.001;
-	var farClip = 20.0;
+	var nearClip = 0.0001;
+	var farClip = 50.0;
 
-	// perspective projection
-	var projectionMatrix = perspectiveMatrix(
-		fovRadians,
-		aspectRatio,
-		nearClip,
-		farClip,
-	);
+	var projectionMatrix = identityMatrix();
+
+	if (!projectionSelect || projectionSelect.value === 'perspective') {
+		// perspective projection (default if control missing)
+		projectionMatrix = perspectiveMatrix(
+			fovRadians,
+			aspectRatio,
+			nearClip,
+			farClip,
+		);
+	} else {
+		// orthographic projection
+		projectionMatrix = orthographicMatrix(
+			-gl.canvas.width/100, gl.canvas.width/100,
+			-gl.canvas.height/100, gl.canvas.height/100,
+			nearClip,
+			farClip
+		);
+	}
 
 	// eye and target
-	var eye = [2, 3, 4];
+	var eye = [2, 5, 4];
 	var target = [0, 0, 0];
 
 	// Build model matrix dynamically: center -> apply rotations -> height scale -> user zoom.
@@ -217,20 +232,14 @@ function draw()
 	if (heightSlider) heightVal = parseFloat(heightSlider.value);
 
 	// Map zoom slider [0,200] -> scale [2, 10.0]
-	var zoomScale = 2 + (zoomVal / 200) * (10.0 - 2.0);
+	var zoomScale = 0.5 + (zoomVal / 200) * (5 - 0.5);
 	// Map height slider [0,100] -> height multiplier [0, 1]
 	var heightScale = (heightVal / 100) * 1.0;
 
 	// Matrices (note: provided helpers are column-major arrays).
-	var centerTranslation = translateMatrix(0, 0, 0);
+	var centerTranslation = translateMatrix(eyeX, 0, eyeZ);
 	var scaleHeight = scaleMatrix(1, Math.max(0.0001, heightScale), 1);
 	var uniformZoom = scaleMatrix(zoomScale, zoomScale, zoomScale);
-
-	var modelMatrix = multiplyArrayOfMatrices([
-		uniformZoom,
-		scaleHeight,
-		centerTranslation
-	]);
 
 	// setup viewing matrix
 	var eyeToTarget = subtract(target, eye);
@@ -238,18 +247,22 @@ function draw()
 
 	var rotX = gXRot * Math.PI / 180;
 	var rotXMatrix = rotateXMatrix(rotX);
-
 	var rotY = rotYDeg * Math.PI / 180;
 	var rotYMatrix = rotateYMatrix(rotY);
-
 	var rotZ = gZRot * Math.PI / 180;
 	var rotZMatrix = rotateZMatrix(rotZ);
 
 	var finalRotationMatrix = multiplyArrayOfMatrices([rotXMatrix, rotYMatrix, rotZMatrix]);
 
+	var modelMatrix = multiplyArrayOfMatrices([
+		uniformZoom,
+		centerTranslation,
+		finalRotationMatrix,
+		scaleHeight
+	]);
 
 	// model-view Matrix = view * model
-	var modelviewMatrix = multiplyArrayOfMatrices([viewMatrix, finalRotationMatrix, modelMatrix]);
+	var modelviewMatrix = multiplyArrayOfMatrices([viewMatrix, modelMatrix]);
 
 
 	// enable depth testing
@@ -339,6 +352,7 @@ function createBox()
 var isDragging = false;
 var startX, startY;
 var leftMouse = false;
+var rightMouse = false;
 
 function addMouseCallback(canvas)
 {
@@ -351,7 +365,7 @@ function addMouseCallback(canvas)
 			leftMouse = true;
 		} else if (e.button === 2) {
 			console.log("Right button pressed");
-			leftMouse = false;
+			rightMouse = true;
 		}
 
 		isDragging = true;
@@ -391,16 +405,26 @@ function addMouseCallback(canvas)
 		console.log('mouse drag by: ' + deltaX + ', ' + deltaY);
 
 		// implement dragging logic
-		gZRot += deltaX * 0.5; // adjust sensitivity as needed
-		gXRot += deltaY * -0.5;
+		if (leftMouse){
+			gZRot += deltaX * 0.5; // adjust sensitivity as needed
+			gXRot += deltaY * -0.5;
+		}
 
-
+		if (rightMouse) {
+			eyeX += deltaX * 0.01;
+			eyeZ += deltaY * 0.01;
+		}
 		startX = currentX;
 		startY = currentY;
 	});
 
-	document.addEventListener("mouseup", function () {
+	document.addEventListener("mouseup", function (e) {
 		isDragging = false;
+		if (e.button === 0) {
+			leftMouse = false;
+		} else if (e.button === 2) {
+			rightMouse = false;
+		}
 	});
 
 	document.addEventListener("mouseleave", () => {
@@ -408,10 +432,8 @@ function addMouseCallback(canvas)
 	});
 }
 
-const rotationRange = document.getElementById("rotationRange");
 const scaleRange = document.getElementById("scale");
-const heightRange = document.getElementById("height");
-const fileInput = document.getElementById('fileInput');
+const projectionSelect = document.getElementById("projectionType");
 
 function initialize() 
 {
