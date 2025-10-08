@@ -79,7 +79,15 @@ function createMeshFromHeightmap(heightmap)
 	const positions = new Float32Array(quadCount * FLOATS_PER_QUAD);
 
 	var edgeSet = new Set();
-	var wireframe = [];
+
+
+	// Preallocate wireframe array to save memory and improve performance
+	const EDGES_PER_QUAD = 5; // TL->TR, TR->BR, BR->BL, BL->TL, TR->BL
+	const VALUES_PER_EDGE = 6; // 2 vertices * 3 components
+	const wfAlloc = quadCount * EDGES_PER_QUAD * VALUES_PER_EDGE;
+	var wireframe = new Float32Array(wfAlloc);
+
+	let wfIndex = 0; // current index in wireframe array
 	function addEdge(ax, ay, az, bx, by, bz) {
 
 		// Use a set to avoid duplicate edges (actually don't because it kills performance)
@@ -88,7 +96,14 @@ function createMeshFromHeightmap(heightmap)
 		// if (edgeSet.has(key1) || edgeSet.has(key2)) return;
 
 		// edgeSet.add(key1);
-		wireframe.push([ax, ay, az, bx, by, bz]);
+		// wireframe.push([ax, ay, az, bx, by, bz]);
+
+		wireframe[wfIndex++] = ax;
+		wireframe[wfIndex++] = ay;
+		wireframe[wfIndex++] = az;
+		wireframe[wfIndex++] = bx;
+		wireframe[wfIndex++] = by;
+		wireframe[wfIndex++] = bz;
 	}
 
 	let p = 0; // index
@@ -127,11 +142,18 @@ function createMeshFromHeightmap(heightmap)
 			addEdge(x0, hBL, z1, x0, hTL, z0); // left
 			// addEdge(x0, hTR, z0, x0, hBL, z1); // weird diagonal that doesn't look good
 			addEdge(x1, hTR, z0, x0, hBL, z1); // diagonal
+
+			// wireframe.push(x0, hTL, z0, x1, hTR, z0,
+			// 	x1, hTR, z0, x1, hBR, z1,
+			// 	x1, hBR, z1, x0, hBL, z1,
+			// 	x0, hBL, z1, x0, hTL, z0,
+			// 	x1, hTR, z0, x0, hBL, z1
+			// ); 
 		}
 	}
 	gModelMatrix = scaleMatrix(1,1,1); // global model matrix scalar mult
 
-	return { positions: positions, wireframePositions: new Float32Array(wireframe.flat()) };
+	return { positions: positions, wireframePositions: wireframe };
 }
 
 function drawMesh(mesh) {
@@ -171,11 +193,17 @@ window.loadImageFile = function(event)
 	{
 		// create an internal Image object to hold the image into memory
 		var img = new Image();
-		img.onload = function() 
+		img.onload = function()
 		{
 			// heightmapData is globally defined
+			// heightmapData is globally defined
+			// Use Date.now() to capture timestamps (milliseconds since epoch).
+			var startTime = Date.now();
+			console.log("Start time: " + startTime);
 			heightmapData = processImage(img);
+
 			
+
 			/*
 				TODO: using the data in heightmapData, create a triangle mesh
 					heightmapData.data: array holding the actual data, note that 
@@ -185,9 +213,14 @@ window.loadImageFile = function(event)
 					heightmapData.height: height of the map (number of rows)
 			*/
 
+			console.log("Image processing took " + (Date.now() - startTime) + " ms");
+			startTime = Date.now();
 			const mesh = createMeshFromHeightmap(heightmapData);
-			drawMesh(mesh);
+			console.log("Mesh creation took " + (Date.now() - startTime) + " ms");
 
+			startTime = Date.now();
+			drawMesh(mesh);
+			console.log("Mesh draw took " + (Date.now() - startTime) + " ms");
 
 			console.log('loaded image: ' + heightmapData.width + ' x ' + heightmapData.height);
 
@@ -443,7 +476,7 @@ function addMouseCallback(canvas)
 
 		var deltaX = currentX - startX;
 		var deltaY = currentY - startY;
-		console.log('mouse drag by: ' + deltaX + ', ' + deltaY);
+		// console.log('mouse drag by: ' + deltaX + ', ' + deltaY); //heavy spam
 
 		// implement dragging logic
 		if (leftMouse){
