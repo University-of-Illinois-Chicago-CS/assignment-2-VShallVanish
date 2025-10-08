@@ -496,8 +496,8 @@ function initialize()
 
 
 	// create buffers to put in box
-	// var boxVertices = new Float32Array(box['positions']);
-	// var posBuffer = createBuffer(gl, gl.ARRAY_BUFFER, boxVertices);
+	var boxVertices = new Float32Array(box['positions']);
+	var posBuffer = createBuffer(gl, gl.ARRAY_BUFFER, boxVertices);
 
 	var vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSrc);
 	var fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSrc);
@@ -510,20 +510,24 @@ function initialize()
 	uniformModelViewLoc = gl.getUniformLocation(program, 'modelview');
 	uniformProjectionLoc = gl.getUniformLocation(program, 'projection');
 
-	// vao = createVAO(gl, 
-	// 	// positions
-	// 	posAttribLoc, posBuffer, 
+	vao = createVAO(gl, 
+		// positions
+		posAttribLoc, posBuffer, 
 
-	// 	// normals (unused in this assignments)
-	// 	null, null, 
+		// normals (unused in this assignments)
+		null, null, 
 
-	// 	// colors (not needed--computed by shader)
-	// 	null, null
-	// );
+		// colors (not needed--computed by shader)
+		null, null
+	);
 
 	// load "rainier-small.jpeg" as test image
 	var img = new Image();
 	img.onload = function() {
+		if (!img) {
+			console.log("Unable to load default image: 'rainier-small.jpeg', rendering box instead");
+			return;
+		}
 		heightmapData = processImage(img);
 		const mesh = createMeshFromHeightmap(heightmapData);
 		drawMesh(mesh);
