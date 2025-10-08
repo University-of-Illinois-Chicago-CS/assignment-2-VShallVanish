@@ -5,12 +5,15 @@ import fragmentShaderSrc from './fragment.glsl.js'
 
 var gl = null;
 var vao = null;
+var wireframeVAO = null;
+var wireframeVertexCount = 0;
+
 var program = null;
 var vertexCount = 0;
 var uniformModelViewLoc = null;
 var uniformProjectionLoc = null;
 var heightmapData = null;
-// model transform (will scale terrain larger than unit cube for visibility)
+
 var gModelMatrix = identityMatrix();
 var gZRot = 0; // global rotation angle around Z axis, in radians
 var gXRot = 0; // global rotation angle around X axis, in radians
@@ -66,7 +69,7 @@ function createMeshFromHeightmap(heightmap)
 {
 	const w = heightmap.width;
 	const h = heightmap.height;
-	const data = heightmap.data; // already 0..1 luminance (raw) from processImage
+	const data = heightmap.data; // 0-1 range
 	if (w < 2 || h < 2) return { positions: new Float32Array() };
 
 	const quadsX = w - 1;
@@ -75,7 +78,20 @@ function createMeshFromHeightmap(heightmap)
 	const FLOATS_PER_QUAD = 18; // 2 triangles * 3 verts * 3 comps
 	const positions = new Float32Array(quadCount * FLOATS_PER_QUAD);
 
-	let p = 0; // write cursor into positions
+	var edgeSet = new Set();
+	var wireframe = [];
+	function addEdge(ax, ay, az, bx, by, bz) {
+
+		// Use a set to avoid duplicate edges (actually don't because it kills performance)
+		// const key1 = `${ax},${ay},${az}-${bx},${by},${bz}`;
+		// const key2 = `${bx},${by},${bz}-${ax},${ay},${az}`;
+		// if (edgeSet.has(key1) || edgeSet.has(key2)) return;
+
+		// edgeSet.add(key1);
+		wireframe.push([ax, ay, az, bx, by, bz]);
+	}
+
+	let p = 0; // index
 	for (let row = 0; row < h - 1; row++) {
 		const rowOffset = row * w;
 		const nextRowOffset = (row + 1) * w;
@@ -103,16 +119,24 @@ function createMeshFromHeightmap(heightmap)
 			positions[p++] = x1; positions[p++] = hTR; positions[p++] = z0;
 			positions[p++] = x1; positions[p++] = hBR; positions[p++] = z1;
 			positions[p++] = x0; positions[p++] = hBL; positions[p++] = z1;
+
+			// Add quad perimeter edges (TL->TR, TR->BR, BR->BL, BL->TL, TR->BL)
+			addEdge(x0, hTL, z0, x1, hTR, z0); // top
+			addEdge(x1, hTR, z0, x1, hBR, z1); // right
+			addEdge(x1, hBR, z1, x0, hBL, z1); // bottom
+			addEdge(x0, hBL, z1, x0, hTL, z0); // left
+			// addEdge(x0, hTR, z0, x0, hBL, z1); // weird diagonal that doesn't look good
+			addEdge(x1, hTR, z0, x0, hBL, z1); // diagonal
 		}
 	}
-	gModelMatrix = identityMatrix();
+	gModelMatrix = scaleMatrix(1,1,1); // global model matrix scalar mult
 
-	return { positions };
+	return { positions: positions, wireframePositions: new Float32Array(wireframe.flat()) };
 }
 
 function drawMesh(mesh) {
 	// Support either plain array or pre-created Float32Array.
-	const posData = (mesh.positions instanceof Float32Array) ? mesh.positions : new Float32Array(mesh.positions);
+	const posData = mesh.positions;
 	vertexCount = posData.length / 3; // global used by draw()
 	const posBuffer = createBuffer(gl, gl.ARRAY_BUFFER, posData);
 
@@ -121,6 +145,17 @@ function drawMesh(mesh) {
 		null, null,
 		null, null
 	);
+
+	if (mesh.wireframePositions) {
+		const wfBuffer = createBuffer(gl, gl.ARRAY_BUFFER, mesh.wireframePositions);
+		wireframeVertexCount = mesh.wireframePositions.length / 3;
+		wireframeVAO = createVAO(gl,
+			gl.getAttribLocation(program, "position"), wfBuffer,
+			null, null,
+			null, null
+		);
+	}
+	
 	window.requestAnimationFrame(draw);
 }
 
@@ -191,7 +226,7 @@ function draw()
 	var fovRadians = 75 * Math.PI / 180;
 	var aspectRatio = +gl.canvas.width / +gl.canvas.height;
 	var nearClip = 0.0001;
-	var farClip = 50.0;
+	var farClip = 100.0;
 
 	var projectionMatrix = identityMatrix();
 
@@ -214,7 +249,7 @@ function draw()
 	}
 
 	// eye and target
-	var eye = [2, 5, 4];
+	var eye = [0, 5, 5];
 	var target = [0, 0, 0];
 
 	// Build model matrix dynamically: center -> apply rotations -> height scale -> user zoom.
@@ -231,8 +266,8 @@ function draw()
 	if (zoomSlider) zoomVal = parseFloat(zoomSlider.value);
 	if (heightSlider) heightVal = parseFloat(heightSlider.value);
 
-	// Map zoom slider [0,200] -> scale [2, 10.0]
-	var zoomScale = 0.5 + (zoomVal / 200) * (5 - 0.5);
+	// Map zoom slider [0,200] -> scale [1, 8.0]
+	var zoomScale = 1 + (zoomVal / 200) * (8 - 1);
 	// Map height slider [0,100] -> height multiplier [0, 1]
 	var heightScale = (heightVal / 100) * 1.0;
 
@@ -252,13 +287,15 @@ function draw()
 	var rotZ = gZRot * Math.PI / 180;
 	var rotZMatrix = rotateZMatrix(rotZ);
 
-	var finalRotationMatrix = multiplyArrayOfMatrices([rotXMatrix, rotYMatrix, rotZMatrix]);
+	// Do Y first so it rotates around center
+	var finalRotationMatrix = multiplyArrayOfMatrices([rotYMatrix, rotZMatrix, rotXMatrix]);
 
 	var modelMatrix = multiplyArrayOfMatrices([
 		uniformZoom,
 		centerTranslation,
 		finalRotationMatrix,
-		scaleHeight
+		scaleHeight,
+		gModelMatrix
 	]);
 
 	// model-view Matrix = view * model
@@ -281,10 +318,14 @@ function draw()
 	gl.uniformMatrix4fv(uniformModelViewLoc, false, new Float32Array(modelviewMatrix));
 	gl.uniformMatrix4fv(uniformProjectionLoc, false, new Float32Array(projectionMatrix));
 
-	gl.bindVertexArray(vao);
-	
-	var primitiveType = gl.TRIANGLES;
-	gl.drawArrays(primitiveType, 0, vertexCount);
+
+	if (wireframeCheckbox && wireframeCheckbox.checked && wireframeVAO) {
+		  gl.bindVertexArray(wireframeVAO);
+		  gl.drawArrays(gl.LINES, 0, wireframeVertexCount);
+	} else {
+		  gl.bindVertexArray(vao);
+		  gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+	}
 
 	requestAnimationFrame(draw);
 
@@ -406,13 +447,15 @@ function addMouseCallback(canvas)
 
 		// implement dragging logic
 		if (leftMouse){
-			gZRot += deltaX * 0.5; // adjust sensitivity as needed
-			gXRot += deltaY * -0.5;
+			gZRot += deltaX * 0.2;
+			gXRot += deltaY * -0.2;
 		}
 
 		if (rightMouse) {
-			eyeX += deltaX * 0.01;
-			eyeZ += deltaY * 0.01;
+			// pan with zoom factored in for absolutely no reason lol
+			var scaleVal = parseFloat(scaleRange.value);
+			eyeX += deltaX * 0.01 * (1.25-scaleVal/200);
+			eyeZ += deltaY * 0.01 * (1.25-scaleVal/200); 
 		}
 		startX = currentX;
 		startY = currentY;
@@ -434,6 +477,7 @@ function addMouseCallback(canvas)
 
 const scaleRange = document.getElementById("scale");
 const projectionSelect = document.getElementById("projectionType");
+const wireframeCheckbox = document.getElementById("wireframe");
 
 function initialize() 
 {
@@ -446,9 +490,9 @@ function initialize()
 	// add mouse callbacks
 	addMouseCallback(canvas);
 
-	// var box = createBox();
-	// vertexCount = box.positions.length / 3;		// vertexCount is global variable used by draw()
-	// console.log(box);
+	var box = createBox();
+	vertexCount = box.positions.length / 3;		// vertexCount is global variable used by draw()
+	console.log(box);
 
 
 	// create buffers to put in box
