@@ -45,7 +45,7 @@
 
             <tr>
                 <td>Zoom</td>
-                <td><input value="0" id="scale" type="range" min="0" max="200" value="0">
+                <td><input value="100" id="scale" type="range" min="0" max="200" value="0">
                 </td>
             </tr>
 
@@ -61,6 +61,19 @@
                 <td><input type="file" id="fileInput" onchange="loadImageFile(event)">
                 </td>
             </tr>
+
+            <tr>
+                <td>Projection Type</td>
+                <td>
+                    <select id="projectionType">
+                        <option value="perspective">Perspective</option>
+                        <option value="orthographic">Orthographic</option>
+                    </select>
+            </tr>
+
+            <tr>
+                <td>Wireframe Mode</td>
+                <td><input type="checkbox" id="wireframe"></td>
 
         </table>
     </div>
